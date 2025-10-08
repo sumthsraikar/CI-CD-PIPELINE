@@ -1,0 +1,45 @@
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY = "docker.io"
+        DOCKER_REPO = "myuser/static-site"
+        APP = "static-app"
+        KUBE_NAMESPACE = "dev"
+        IMAGE_TAG = "latest"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build & Push Docker Image') {
+            steps {
+                // Jenkins injects DockerHub credentials
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh """
+                        docker build -t ${REGISTRY}/${DOCKER_REPO}:${IMAGE_TAG} .
+                        echo \$DOCKER_PASS | docker login ${REGISTRY} -u \$DOCKER_USER --password-stdin
+                        docker push ${REGISTRY}/${DOCKER_REPO}:${IMAGE_TAG}
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                // Jenkins injects kubeconfig file
+                withCredentials([file(credentialsId: 'kubeconfig-cred', variable: 'KUBECONFIG_FILE')]) {
+                    sh """
+                        export KUBECONFIG=$KUBECONFIG_FILE
+                        kubectl set image deployment/${APP} ${APP}=${REGISTRY}/${DOCKER_REPO}:${IMAGE_TAG} -n ${KUBE_NAMESPACE}
+                        kubectl rollout status deployment/${APP} -n ${KUBE_NAMESPACE}
+                    """
+                }
+            }
+        }
+    }
+}
